@@ -19,7 +19,7 @@ print("Loading embedding model...")
 embedding_model = SentenceTransformer('intfloat/multilingual-e5-small')
 
 print("Loading reranker model...")
-reranker = FlagReranker('BAAI/bge-m3', use_fp16=True)
+reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True)
 
 
 def precision_at_k(y_true, y_pred, k):
@@ -51,7 +51,7 @@ def run_condition(language, language_name, label_lang, label_condition):
     print(f"{'='*60}")
 
     dataset = load_dataset('coastalcph/multi_eurlex', language, split='test',
-                           label_level='all_levels')
+                       label_level='all_levels', trust_remote_code=True)
 
     if TEST_MODE:
         dataset = dataset.select(range(50))
@@ -97,7 +97,8 @@ def run_condition(language, language_name, label_lang, label_condition):
         doc_text = doc['text']
         pairs = [[doc_text, label_descriptors_raw[i]] for i in top_candidate_indices]
         rerank_scores = reranker.compute_score(pairs, batch_size=32)
-
+        rerank_scores = np.array(rerank_scores)
+        
         reranked_order = np.argsort(rerank_scores)[::-1]
         reranked_predictions = top_candidate_indices[reranked_order]
 

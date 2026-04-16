@@ -116,7 +116,7 @@ def run_condition(language, language_name, label_lang, label_condition):
 
     # Save results
     results_to_save = {
-        'model': 'multilingual-e5-small + bge-m3-reranker',
+        'model': 'multilingual-e5-small + bge-reranker-v2-m3',
         'dataset': 'MultiEURLEX',
         'language': f'{language_name} ({label_condition})',
         'candidate_k': CANDIDATE_K,

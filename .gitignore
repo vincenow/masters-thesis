@@ -211,3 +211,4 @@ data/
 .DS_Store
 X-Transformer/
 eurovoc/eurovoc-skos-ap-act.rdf
+eurovoc_in_skos_core_concepts.rdf

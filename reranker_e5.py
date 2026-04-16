@@ -8,7 +8,7 @@ from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
 from FlagEmbedding import FlagReranker
 
-TEST_MODE = True  # set to False for full run
+TEST_MODE = False  # set to False for full run
 
 CANDIDATE_K = 100
 

@@ -14,7 +14,7 @@ from dotenv import load_dotenv
 load_dotenv()
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-TEST_MODE = True  # set to True for quick test run
+TEST_MODE = False  # set to True for quick test run
 
 CANDIDATE_K = 100
 OPENAI_MODEL = "text-embedding-3-small"

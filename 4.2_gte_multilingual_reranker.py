@@ -67,7 +67,7 @@ def run_condition(language, language_name, label_lang, label_condition):
     label_embeddings = embedding_model.encode(
         label_descriptors_raw,
         show_progress_bar=True,
-        batch_size=32
+        batch_size=8
     )
 
     print("Encoding documents...")
@@ -75,7 +75,7 @@ def run_condition(language, language_name, label_lang, label_condition):
     doc_embeddings = embedding_model.encode(
         texts,
         show_progress_bar=True,
-        batch_size=32
+        batch_size=8
     )
 
     k_values = [5, 10, 20, 50, 100]

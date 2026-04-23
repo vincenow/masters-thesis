@@ -18,7 +18,7 @@ url = "https://raw.githubusercontent.com/nlpaueb/multi-eurlex/master/data/eurovo
 eurovoc_concepts = requests.get(url).json()
 
 print("Loading embedding model...")
-embedding_model = SentenceTransformer(MODEL_NAME)
+embedding_model = SentenceTransformer(MODEL_NAME, device='cuda')
 
 print("Loading reranker model...")
 reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True)
@@ -97,7 +97,7 @@ def run_condition(language, language_name, label_lang, label_condition):
         # Stage 2: rerank with cross-encoder
         doc_text = doc['text']
         pairs = [[doc_text, label_descriptors_raw[i]] for i in top_candidate_indices]
-        rerank_scores = np.array(reranker.compute_score(pairs, batch_size=32))
+        rerank_scores = np.array(reranker.compute_score(pairs, batch_size=4))
         reranked_order = np.argsort(rerank_scores)[::-1]
         reranked_predictions = top_candidate_indices[reranked_order]
 

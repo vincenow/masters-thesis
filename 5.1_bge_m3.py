@@ -17,7 +17,7 @@ url = "https://raw.githubusercontent.com/nlpaueb/multi-eurlex/master/data/eurovo
 eurovoc_concepts = requests.get(url).json()
 
 print("Loading embedding model...")
-embedding_model = SentenceTransformer(MODEL_NAME)
+embedding_model = SentenceTransformer(MODEL_NAME, device='cuda')
 
 
 def precision_at_k(y_true, y_pred, k):

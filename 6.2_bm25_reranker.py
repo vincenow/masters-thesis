@@ -14,7 +14,7 @@ url = "https://raw.githubusercontent.com/nlpaueb/multi-eurlex/master/data/eurovo
 eurovoc_concepts = requests.get(url).json()
 
 print("Loading reranker model...")
-reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True)
+reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True, device='cuda')
 
 
 def tokenize(text):

@@ -68,7 +68,6 @@ def run_condition(language, language_name, label_lang, label_condition):
         label_descriptors_raw,
         show_progress_bar=True,
         batch_size=32,
-        max_length=512
     )
 
     doc_embeddings = embedding_model.encode(

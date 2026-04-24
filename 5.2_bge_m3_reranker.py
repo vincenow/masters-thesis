@@ -63,19 +63,18 @@ def run_condition(language, language_name, label_lang, label_condition):
     label_ids = classlabel.names
     label_descriptors_raw = [eurovoc_concepts[label_id][label_lang] for label_id in label_ids]
 
-    print("Encoding labels...")
     label_embeddings = embedding_model.encode(
         label_descriptors_raw,
         show_progress_bar=True,
-        batch_size=32
+        batch_size=32,
+        max_length=512
     )
 
-    print("Encoding documents...")
-    texts = [doc['text'] for doc in dataset]
     doc_embeddings = embedding_model.encode(
         texts,
         show_progress_bar=True,
-        batch_size=1
+        batch_size=8,
+        max_length=512
     )
 
     k_values = [5, 10, 20, 50, 100]

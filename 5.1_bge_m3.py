@@ -18,6 +18,7 @@ eurovoc_concepts = requests.get(url).json()
 
 print("Loading embedding model...")
 embedding_model = SentenceTransformer(MODEL_NAME, device='cuda')
+embedding_model.max_seq_length = 512
 
 
 def precision_at_k(y_true, y_pred, k):
@@ -72,7 +73,6 @@ def run_condition(language, language_name, label_lang, label_condition):
         texts,
         show_progress_bar=True,
         batch_size=8,
-        max_length=512
 )
 
     k_values = [5, 10, 20, 50, 100]

@@ -19,6 +19,7 @@ eurovoc_concepts = requests.get(url).json()
 
 print("Loading embedding model...")
 embedding_model = SentenceTransformer(MODEL_NAME, device='cuda')
+embedding_model.max_seq_length = 512
 
 print("Loading reranker model...")
 reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True, device='cuda')
@@ -74,7 +75,6 @@ def run_condition(language, language_name, label_lang, label_condition):
         texts,
         show_progress_bar=True,
         batch_size=8,
-        max_length=512
     )
 
     k_values = [5, 10, 20, 50, 100]

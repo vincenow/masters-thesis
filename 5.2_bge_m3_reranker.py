@@ -21,7 +21,7 @@ print("Loading embedding model...")
 embedding_model = SentenceTransformer(MODEL_NAME, device='cuda')
 
 print("Loading reranker model...")
-reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True)
+reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True, device='cuda')
 
 
 def precision_at_k(y_true, y_pred, k):

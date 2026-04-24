@@ -70,6 +70,8 @@ def run_condition(language, language_name, label_lang, label_condition):
         batch_size=32,
     )
 
+    print("Encoding documents...")
+    texts = [doc['text'] for doc in dataset]
     doc_embeddings = embedding_model.encode(
         texts,
         show_progress_bar=True,

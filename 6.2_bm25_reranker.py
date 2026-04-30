@@ -3,7 +3,7 @@ import numpy as np
 import requests
 from tqdm import tqdm
 from datasets import load_dataset
-from rank_bm25 import BM25Okapi
+import bm25s
 from FlagEmbedding import FlagReranker
 
 TEST_MODE = False
@@ -15,10 +15,6 @@ eurovoc_concepts = requests.get(url).json()
 
 print("Loading reranker model...")
 reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True, device='cuda')
-
-
-def tokenize(text):
-    return text.lower().split()
 
 
 def precision_at_k(y_true, y_pred, k):
@@ -60,11 +56,18 @@ def run_condition(language, language_name, label_lang, label_condition):
     label_ids = classlabel.names
     label_descriptors_raw = [eurovoc_concepts[label_id][label_lang] for label_id in label_ids]
 
-    print("Tokenizing labels...")
-    tokenized_labels = [tokenize(label) for label in label_descriptors_raw]
+    # Filter out None/empty descriptors and keep index mapping
+    valid_indices = [i for i, d in enumerate(label_descriptors_raw) if d and d.strip()]
+    valid_descriptors = [label_descriptors_raw[i] for i in valid_indices]
 
-    print("Building BM25 index over labels...")
-    bm25 = BM25Okapi(tokenized_labels)
+    if len(valid_indices) < len(label_descriptors_raw):
+        print(f"Warning: {len(label_descriptors_raw) - len(valid_indices)} labels had no "
+              f"'{label_lang}' descriptor and were excluded.")
+
+    print("Building BM25S index over labels...")
+    tokenized_labels = bm25s.tokenize(valid_descriptors, stopwords="en")
+    retriever = bm25s.BM25()
+    retriever.index(tokenized_labels)
 
     k_values = [5, 10, 20, 50, 100]
     results = {
@@ -78,17 +81,20 @@ def run_condition(language, language_name, label_lang, label_condition):
         if len(true_labels) == 0:
             continue
 
-        # Stage 1: BM25 retrieval of top CANDIDATE_K
-        query_tokens = tokenize(doc['text'])
-        scores = bm25.get_scores(query_tokens)
-        top_candidate_indices = np.argsort(scores)[::-1][:CANDIDATE_K]
+        # Stage 1: BM25S retrieval of top CANDIDATE_K
+        tokenized_query = bm25s.tokenize([doc['text']], stopwords="en")
+        retrieved_indices, _ = retriever.retrieve(tokenized_query, k=min(CANDIDATE_K, len(valid_indices)))
+        # retrieved_indices[0] are positions into valid_descriptors
+        top_candidate_positions = retrieved_indices[0].tolist()
 
-        # Stage 2: rerank with cross-encoder
+        # Stage 2: rerank with cross-encoder using the valid descriptor text
         doc_text = doc['text']
-        pairs = [[doc_text, label_descriptors_raw[i]] for i in top_candidate_indices]
+        pairs = [[doc_text, valid_descriptors[pos]] for pos in top_candidate_positions]
         rerank_scores = np.array(reranker.compute_score(pairs, batch_size=32))
         reranked_order = np.argsort(rerank_scores)[::-1]
-        reranked_predictions = top_candidate_indices[reranked_order]
+
+        # Map back through valid_indices to get original label integer IDs
+        reranked_predictions = [valid_indices[top_candidate_positions[i]] for i in reranked_order]
 
         for k in k_values:
             results['precision'][k].append(precision_at_k(true_labels, reranked_predictions, k))

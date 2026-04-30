@@ -50,61 +50,72 @@ def run_condition(language, language_name, label_lang, label_condition):
     label_ids = classlabel.names
     label_descriptors = [eurovoc_concepts[label_id][label_lang] for label_id in label_ids]
 
-    # Filter out any None/empty descriptors and track valid index mapping
-    valid_indices = [i for i, d in enumerate(label_descriptors) if d and d.strip()]
-    valid_descriptors = [label_descriptors[i] for i in valid_indices]
+    # Collect all document texts for indexing
+    print("Collecting documents...")
+    all_texts = [doc['text'] for doc in dataset]
 
-    if len(valid_indices) < len(label_descriptors):
-        print(f"Warning: {len(label_descriptors) - len(valid_indices)} labels had no "
-              f"'{label_lang}' descriptor and were excluded.")
-
-    # Build BM25S index over label descriptors (labels are the corpus)
-    print("Building BM25S index over labels...")
-    tokenized_labels = bm25s.tokenize(valid_descriptors, stopwords="en")
+    # Index documents as the corpus (natural BM25 direction)
+    print("Building BM25S index over documents...")
+    tokenized_docs = bm25s.tokenize(all_texts, stopwords="en")
     retriever = bm25s.BM25()
-    retriever.index(tokenized_labels)
+    retriever.index(tokenized_docs)
 
+    # For each label, query the document corpus and record the score
+    # that label gives to each document. Result: a (num_labels, num_docs) score matrix.
+    print("Querying with each label descriptor...")
+    num_docs = len(all_texts)
+    num_labels = len(label_descriptors)
+
+    # label_doc_scores[label_idx, doc_idx] = BM25 score of label query against that document
+    label_doc_scores = np.zeros((num_labels, num_docs), dtype=np.float32)
+
+    for label_idx, descriptor in enumerate(tqdm(label_descriptors, desc="Label queries")):
+        if not descriptor or not descriptor.strip():
+            continue
+        tokenized_query = bm25s.tokenize([descriptor], stopwords="en")
+        # Retrieve all documents (k=num_docs) to get full ranking
+        retrieved_indices, retrieved_scores = retriever.retrieve(
+            tokenized_query, k=num_docs)
+        for pos, (doc_idx, score) in enumerate(
+                zip(retrieved_indices[0].tolist(), retrieved_scores[0].tolist())):
+            label_doc_scores[label_idx, doc_idx] = score
+
+    # Now evaluate per document: rank labels by the score they gave that document
     k_values = [5, 10, 20, 50, 100]
-    max_k = max(k_values)
-
     results = {
         'precision': {k: [] for k in k_values},
         'recall':    {k: [] for k in k_values},
         'ndcg':      {k: [] for k in k_values}
     }
 
-    for idx, doc in enumerate(tqdm(dataset, desc="Evaluating")):
+    print("Computing per-document metrics...")
+    for doc_idx, doc in enumerate(tqdm(dataset, desc="Evaluating")):
         true_labels = set(doc['labels'])
         if len(true_labels) == 0:
             continue
 
-        # Retrieve top-max_k labels for this document
-        # bm25s.tokenize expects a list; stopwords filter common terms
-        tokenized_query = bm25s.tokenize([doc['text']], stopwords="en")
-        retrieved_indices, _ = retriever.retrieve(tokenized_query, k=max_k)
-
-        # retrieved_indices[0] are positions into valid_descriptors;
-        # map back to original label integer IDs via valid_indices
-        ranked_predictions = [valid_indices[i] for i in retrieved_indices[0].tolist()]
+        # Rank all labels by the score they gave this document
+        doc_scores = label_doc_scores[:, doc_idx]
+        ranked_predictions = np.argsort(doc_scores)[::-1].tolist()
 
         for k in k_values:
             results['precision'][k].append(precision_at_k(true_labels, ranked_predictions, k))
             results['recall'][k].append(recall_at_k(true_labels, ranked_predictions, k))
             results['ndcg'][k].append(ndcg_at_k(true_labels, ranked_predictions, k))
 
-    print(f"\nResults for BM25 | {language_name} | {label_condition}")
+    print(f"\nResults for BM25 (label queries) | {language_name} | {label_condition}")
     for k in k_values:
         print(f"  k={k}: P={np.mean(results['precision'][k]):.4f} "
               f"R={np.mean(results['recall'][k]):.4f} "
               f"NDCG={np.mean(results['ndcg'][k]):.4f}")
 
     results_to_save = {
-        'model': 'BM25',
+        'model': 'BM25 (label queries)',
         'dataset': 'MultiEURLEX',
         'language': f'{language_name} ({label_condition})',
         'test_mode': TEST_MODE,
         'num_documents': len(dataset),
-        'num_labels': len(label_descriptors),
+        'num_labels': num_labels,
         'metrics': {
             metric_name: {
                 k: {
@@ -119,7 +130,7 @@ def run_condition(language, language_name, label_lang, label_condition):
     }
 
     prefix = 'TEST_' if TEST_MODE else ''
-    filename = f'{prefix}results_bm25_{language}_{label_condition.replace(" ", "_").lower()}.json'
+    filename = f'{prefix}results_bm25_labelquery_{language}_{label_condition.replace(" ", "_").lower()}.json'
     with open(filename, 'w') as f:
         json.dump(results_to_save, f, indent=2)
     print(f"Saved: {filename}")

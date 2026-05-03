@@ -108,7 +108,7 @@ def run_condition(language, language_name, label_lang, label_condition):
         valid_candidates = [i for i in top_candidate_label_indices
                             if label_descriptors[i] and label_descriptors[i].strip()]
 
-        rerank_scores = np.array(reranker.compute_score(pairs, batch_size=32))
+        rerank_scores = np.array(reranker.compute_score(pairs, batch_size=4))
         reranked_order = np.argsort(rerank_scores)[::-1]
         reranked_predictions = [valid_candidates[i] for i in reranked_order]
 

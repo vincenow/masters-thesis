@@ -3,12 +3,27 @@ import numpy as np
 import requests
 from tqdm import tqdm
 from datasets import load_dataset
-import bm25s
+from sentence_transformers import SentenceTransformer
+from sklearn.metrics.pairwise import cosine_similarity
+from FlagEmbedding import FlagReranker
+
+# Requires transformers>=4.51.0 and sentence-transformers>=2.7.0
 
 TEST_MODE = False
 
+CANDIDATE_K = 100
+MODEL_NAME = 'Qwen/Qwen3-Embedding-0.6B'
+MODEL_SHORT = 'qwen3-embedding-0.6b'
+
 url = "https://raw.githubusercontent.com/nlpaueb/multi-eurlex/master/data/eurovoc_descriptors.json"
 eurovoc_concepts = requests.get(url).json()
+
+print("Loading embedding model...")
+embedding_model = SentenceTransformer(MODEL_NAME, device='cuda')
+embedding_model.max_seq_length = 512
+
+print("Loading reranker model...")
+reranker = FlagReranker('BAAI/bge-reranker-v2-m3', use_fp16=True, device='cuda')
 
 
 def precision_at_k(y_true, y_pred, k):
@@ -48,25 +63,28 @@ def run_condition(language, language_name, label_lang, label_condition):
 
     classlabel = dataset.features["labels"].feature
     label_ids = classlabel.names
-    label_descriptors = [eurovoc_concepts[label_id][label_lang] for label_id in label_ids]
+    label_descriptors_raw = [eurovoc_concepts[label_id][label_lang] for label_id in label_ids]
 
-    # Filter out any None/empty descriptors and track valid index mapping
-    valid_indices = [i for i, d in enumerate(label_descriptors) if d and d.strip()]
-    valid_descriptors = [label_descriptors[i] for i in valid_indices]
+    # Qwen3-Embedding is asymmetric: documents are the query side and use
+    # prompt_name="query"; label descriptors are the passage side (no prompt).
+    print("Encoding labels...")
+    label_embeddings = embedding_model.encode(
+        label_descriptors_raw,
+        show_progress_bar=True,
+        batch_size=32,
+        prompt_name=None,    # passage side — no prompt
+    )
 
-    if len(valid_indices) < len(label_descriptors):
-        print(f"Warning: {len(label_descriptors) - len(valid_indices)} labels had no "
-              f"'{label_lang}' descriptor and were excluded.")
-
-    # Build BM25S index over label descriptors (labels are the corpus)
-    print("Building BM25S index over labels...")
-    tokenized_labels = bm25s.tokenize(valid_descriptors, stopwords="en")
-    retriever = bm25s.BM25()
-    retriever.index(tokenized_labels)
+    print("Encoding documents...")
+    texts = [doc['text'] for doc in dataset]
+    doc_embeddings = embedding_model.encode(
+        texts,
+        show_progress_bar=True,
+        batch_size=8,
+        prompt_name="query",  # query side — instruction prefix
+    )
 
     k_values = [5, 10, 20, 50, 100]
-    max_k = max(k_values)
-
     results = {
         'precision': {k: [] for k in k_values},
         'recall':    {k: [] for k in k_values},
@@ -78,33 +96,36 @@ def run_condition(language, language_name, label_lang, label_condition):
         if len(true_labels) == 0:
             continue
 
-        # Retrieve top-max_k labels for this document
-        # bm25s.tokenize expects a list; stopwords filter common terms
-        tokenized_query = bm25s.tokenize([doc['text']], stopwords="en")
-        retrieved_indices, _ = retriever.retrieve(tokenized_query, k=max_k)
+        # Stage 1: retrieve top CANDIDATE_K by cosine similarity
+        similarities = cosine_similarity([doc_embeddings[idx]], label_embeddings)[0]
+        top_candidate_indices = np.argsort(similarities)[::-1][:CANDIDATE_K]
 
-        # retrieved_indices[0] are positions into valid_descriptors;
-        # map back to original label integer IDs via valid_indices
-        ranked_predictions = [valid_indices[i] for i in retrieved_indices[0].tolist()]
+        # Stage 2: rerank with cross-encoder
+        doc_text = doc['text']
+        pairs = [[doc_text, label_descriptors_raw[i]] for i in top_candidate_indices]
+        rerank_scores = np.array(reranker.compute_score(pairs, batch_size=4))
+        reranked_order = np.argsort(rerank_scores)[::-1]
+        reranked_predictions = top_candidate_indices[reranked_order]
 
         for k in k_values:
-            results['precision'][k].append(precision_at_k(true_labels, ranked_predictions, k))
-            results['recall'][k].append(recall_at_k(true_labels, ranked_predictions, k))
-            results['ndcg'][k].append(ndcg_at_k(true_labels, ranked_predictions, k))
+            results['precision'][k].append(precision_at_k(true_labels, reranked_predictions, k))
+            results['recall'][k].append(recall_at_k(true_labels, reranked_predictions, k))
+            results['ndcg'][k].append(ndcg_at_k(true_labels, reranked_predictions, k))
 
-    print(f"\nResults for BM25 | {language_name} | {label_condition}")
+    print(f"\nResults for {MODEL_SHORT} + BGE-M3 reranker | {language_name} | {label_condition}")
     for k in k_values:
         print(f"  k={k}: P={np.mean(results['precision'][k]):.4f} "
               f"R={np.mean(results['recall'][k]):.4f} "
               f"NDCG={np.mean(results['ndcg'][k]):.4f}")
 
     results_to_save = {
-        'model': 'BM25',
+        'model': f'{MODEL_SHORT} + bge-reranker-v2-m3',
         'dataset': 'MultiEURLEX',
         'language': f'{language_name} ({label_condition})',
+        'candidate_k': CANDIDATE_K,
         'test_mode': TEST_MODE,
         'num_documents': len(dataset),
-        'num_labels': len(label_descriptors),
+        'num_labels': len(label_descriptors_raw),
         'metrics': {
             metric_name: {
                 k: {
@@ -119,7 +140,7 @@ def run_condition(language, language_name, label_lang, label_condition):
     }
 
     prefix = 'TEST_' if TEST_MODE else ''
-    filename = f'{prefix}results_bm25_{language}_{label_condition.replace(" ", "_").lower()}.json'
+    filename = f'{prefix}results_qwen3_reranked_{language}_{label_condition.replace(" ", "_").lower()}.json'
     with open(filename, 'w') as f:
         json.dump(results_to_save, f, indent=2)
     print(f"Saved: {filename}")

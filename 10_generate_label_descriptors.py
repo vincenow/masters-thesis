@@ -4,24 +4,19 @@ Generate AI-enriched EuroVoc label descriptions using the Anthropic Batch API.
 Submits all 4,591 concepts × 4 languages = 18,364 requests in a single batch,
 polls until complete, then saves results to generated_descriptors.json.
 
-Output format mirrors eurovoc_descriptors.json:
-{
-    "100149": {
-        "en": "Social questions refer to ...",
-        "fr": "Les questions sociales ...",
-        "de": "Soziale Fragen umfassen ...",
-        "nl": "Sociale vraagstukken omvatten ..."
-    },
-    ...
-}
-
 Usage:
-    pip install anthropic
     export ANTHROPIC_API_KEY=your_key_here
 
-    python generate_descriptors.py \
+    # Submit new batch and retrieve results:
+    python 10_generate_label_descriptors.py \
         --descriptors /home/ubuntu/masters-thesis/eurovoc_descriptors.json \
         --output generated_descriptors.json
+
+    # Retrieve results from an existing batch (skip resubmission):
+    python 10_generate_label_descriptors.py \
+        --descriptors /home/ubuntu/masters-thesis/eurovoc_descriptors.json \
+        --output generated_descriptors.json \
+        --batch-id msgbatch_01VdfmzakZcNZQLqpSM83hZu
 """
 
 import argparse
@@ -64,7 +59,7 @@ def build_user_prompt(english_descriptor: str, language_name: str) -> str:
 
 # ── Label ID collection ───────────────────────────────────────────────────────
 
-def get_used_label_ids() -> set[str]:
+def get_used_label_ids() -> set:
     print("Loading MultiEURLEX to collect used label IDs...")
     dataset = load_dataset(
         "coastalcph/multi_eurlex",
@@ -86,88 +81,19 @@ def get_used_label_ids() -> set[str]:
     return used_ids
 
 
-# ── Main ──────────────────────────────────────────────────────────────────────
+# ── Result parsing ────────────────────────────────────────────────────────────
 
-def main(descriptors_path: str, output_path: str):
-    if not os.environ.get("ANTHROPIC_API_KEY"):
-        print("Error: ANTHROPIC_API_KEY environment variable not set.")
-        sys.exit(1)
-
-    client = anthropic.Anthropic()
-
-    used_ids = get_used_label_ids()
-
-    with open(descriptors_path) as f:
-        eurovoc: dict = json.load(f)
-
-    # Build one request per (concept, language) pair
-    # custom_id format: "{eurovoc_id}__{lang_code}" — used to parse results later
-    requests = []
-    skipped = 0
-    for eid in sorted(used_ids):
-        if eid not in eurovoc:
-            skipped += 1
-            continue
-        en_desc = eurovoc[eid].get("en")
-        if not en_desc:
-            skipped += 1
-            continue
-        for lang_code, lang_name in LANGUAGES.items():
-            requests.append(
-                Request(
-                    custom_id=f"{eid}__{lang_code}",
-                    params=MessageCreateParamsNonStreaming(
-                        model=MODEL,
-                        max_tokens=300,
-                        system=SYSTEM_PROMPT,
-                        messages=[
-                            {
-                                "role": "user",
-                                "content": build_user_prompt(en_desc, lang_name),
-                            }
-                        ],
-                    ),
-                )
-            )
-
-    print(f"Prepared {len(requests)} requests ({skipped} concepts skipped).")
-
-    # Submit batch
-    print("Submitting batch...")
-    batch = client.messages.batches.create(requests=requests)
-    print(f"Batch submitted. ID: {batch.id}")
-
-    # Save batch ID in case retrieval is interrupted
-    with open("batch_id.txt", "w") as f:
-        f.write(batch.id)
-
-    # Poll until done
-    print("Polling for completion (every 60s)...")
-    while True:
-        batch = client.messages.batches.retrieve(batch.id)
-        counts = batch.request_counts
-        print(
-            f"  {time.strftime('%H:%M:%S')} — "
-            f"processing: {counts.processing}, "
-            f"succeeded: {counts.succeeded}, "
-            f"errored: {counts.errored}"
-        )
-        if batch.processing_status == "ended":
-            break
-        time.sleep(60)
-
-    print("\nBatch finished. Parsing results...")
-
-    # Parse results
+def parse_results(client, batch_id):
     results = {}
     failed = []
 
-    for result in client.messages.batches.results(batch.id):
+    for result in client.messages.batches.results(batch_id):
         custom_id = result.custom_id  # format: "{eurovoc_id}__{lang_code}"
         eurovoc_id, lang_code = custom_id.rsplit("__", 1)
 
         if result.result.type == "succeeded":
             raw = result.result.message.content[0].text.strip()
+            raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
             try:
                 parsed = json.loads(raw)
                 description = parsed["description"]
@@ -181,7 +107,82 @@ def main(descriptors_path: str, output_path: str):
             print(f"  [WARN] Failed: {custom_id} — {result.result.type}")
             failed.append(custom_id)
 
-    # Save output
+    return results, failed
+
+
+# ── Main ──────────────────────────────────────────────────────────────────────
+
+def main(descriptors_path: str, output_path: str, batch_id: str = None):
+    if not os.environ.get("ANTHROPIC_API_KEY"):
+        print("Error: ANTHROPIC_API_KEY environment variable not set.")
+        sys.exit(1)
+
+    client = anthropic.Anthropic()
+
+    if batch_id:
+        print(f"Retrieving existing batch: {batch_id}")
+    else:
+        # Load dataset and build requests
+        used_ids = get_used_label_ids()
+
+        with open(descriptors_path) as f:
+            eurovoc = json.load(f)
+
+        requests = []
+        skipped = 0
+        for eid in sorted(used_ids):
+            if eid not in eurovoc:
+                skipped += 1
+                continue
+            en_desc = eurovoc[eid].get("en")
+            if not en_desc:
+                skipped += 1
+                continue
+            for lang_code, lang_name in LANGUAGES.items():
+                requests.append(
+                    Request(
+                        custom_id=f"{eid}__{lang_code}",
+                        params=MessageCreateParamsNonStreaming(
+                            model=MODEL,
+                            max_tokens=300,
+                            system=SYSTEM_PROMPT,
+                            messages=[
+                                {
+                                    "role": "user",
+                                    "content": build_user_prompt(en_desc, lang_name),
+                                }
+                            ],
+                        ),
+                    )
+                )
+
+        print(f"Prepared {len(requests)} requests ({skipped} concepts skipped).")
+        print("Submitting batch...")
+        batch = client.messages.batches.create(requests=requests)
+        batch_id = batch.id
+        print(f"Batch submitted. ID: {batch_id}")
+
+        with open("batch_id.txt", "w") as f:
+            f.write(batch_id)
+
+    # Poll until done
+    print("Polling for completion (every 60s)...")
+    while True:
+        batch = client.messages.batches.retrieve(batch_id)
+        counts = batch.request_counts
+        print(
+            f"  {time.strftime('%H:%M:%S')} — "
+            f"processing: {counts.processing}, "
+            f"succeeded: {counts.succeeded}, "
+            f"errored: {counts.errored}"
+        )
+        if batch.processing_status == "ended":
+            break
+        time.sleep(60)
+
+    print("\nBatch finished. Parsing results...")
+    results, failed = parse_results(client, batch_id)
+
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(results, f, ensure_ascii=False, indent=1)
 
@@ -209,5 +210,10 @@ if __name__ == "__main__":
         default="generated_descriptors.json",
         help="Output path (default: generated_descriptors.json)",
     )
+    parser.add_argument(
+        "--batch-id",
+        default=None,
+        help="Existing batch ID to retrieve instead of submitting a new batch.",
+    )
     args = parser.parse_args()
-    main(args.descriptors, args.output)
+    main(args.descriptors, args.output, args.batch_id)

@@ -1,9 +1,6 @@
 """
 Generate AI-enriched EuroVoc label descriptions using the Anthropic Batch API.
 
-Submits all 4,591 concepts × 4 languages = 18,364 requests in a single batch,
-polls until complete, then saves results to generated_descriptors.json.
-
 Usage:
     export ANTHROPIC_API_KEY=your_key_here
 
@@ -17,6 +14,12 @@ Usage:
         --descriptors /home/ubuntu/masters-thesis/eurovoc_descriptors.json \
         --output generated_descriptors.json \
         --batch-id msgbatch_01VdfmzakZcNZQLqpSM83hZu
+
+    # Retry failed requests from a previous run:
+    python 10_generate_label_descriptors.py \
+        --descriptors /home/ubuntu/masters-thesis/eurovoc_descriptors.json \
+        --output generated_descriptors.json \
+        --retry-failed failed_requests.txt
 """
 
 import argparse
@@ -57,7 +60,7 @@ def build_user_prompt(english_descriptor: str, language_name: str) -> str:
     )
 
 
-# ── Label ID collection ───────────────────────────────────────────────────────
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 def get_used_label_ids() -> set:
     print("Loading MultiEURLEX to collect used label IDs...")
@@ -81,14 +84,56 @@ def get_used_label_ids() -> set:
     return used_ids
 
 
-# ── Result parsing ────────────────────────────────────────────────────────────
+def build_request(custom_id: str, en_desc: str, lang_code: str) -> Request:
+    lang_name = LANGUAGES[lang_code]
+    return Request(
+        custom_id=custom_id,
+        params=MessageCreateParamsNonStreaming(
+            model=MODEL,
+            max_tokens=300,
+            system=SYSTEM_PROMPT,
+            messages=[
+                {
+                    "role": "user",
+                    "content": build_user_prompt(en_desc, lang_name),
+                }
+            ],
+        ),
+    )
+
+
+def submit_and_poll(client, requests):
+    print(f"Submitting batch with {len(requests)} requests...")
+    batch = client.messages.batches.create(requests=requests)
+    batch_id = batch.id
+    print(f"Batch submitted. ID: {batch_id}")
+
+    with open("batch_id.txt", "w") as f:
+        f.write(batch_id)
+
+    print("Polling for completion (every 60s)...")
+    while True:
+        batch = client.messages.batches.retrieve(batch_id)
+        counts = batch.request_counts
+        print(
+            f"  {time.strftime('%H:%M:%S')} — "
+            f"processing: {counts.processing}, "
+            f"succeeded: {counts.succeeded}, "
+            f"errored: {counts.errored}"
+        )
+        if batch.processing_status == "ended":
+            break
+        time.sleep(60)
+
+    return batch_id
+
 
 def parse_results(client, batch_id):
     results = {}
     failed = []
 
     for result in client.messages.batches.results(batch_id):
-        custom_id = result.custom_id  # format: "{eurovoc_id}__{lang_code}"
+        custom_id = result.custom_id
         eurovoc_id, lang_code = custom_id.rsplit("__", 1)
 
         if result.result.type == "succeeded":
@@ -110,23 +155,88 @@ def parse_results(client, batch_id):
     return results, failed
 
 
+def save_output(results, output_path, failed):
+    with open(output_path, "w", encoding="utf-8") as f:
+        json.dump(results, f, ensure_ascii=False, indent=1)
+    print(f"\nDone.")
+    print(f"  Concepts saved: {len(results)}")
+    print(f"  Total descriptions: {sum(len(v) for v in results.values())}")
+    print(f"  Failed: {len(failed)}")
+    print(f"  Output: {output_path}")
+    if failed:
+        with open("failed_requests.txt", "w") as f:
+            f.write("\n".join(failed))
+        print(f"  Failed IDs written to failed_requests.txt")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
-def main(descriptors_path: str, output_path: str, batch_id: str = None):
+def main(descriptors_path: str, output_path: str, batch_id: str = None, retry_failed: str = None):
     if not os.environ.get("ANTHROPIC_API_KEY"):
         print("Error: ANTHROPIC_API_KEY environment variable not set.")
         sys.exit(1)
 
     client = anthropic.Anthropic()
 
-    if batch_id:
-        print(f"Retrieving existing batch: {batch_id}")
-    else:
-        # Load dataset and build requests
-        used_ids = get_used_label_ids()
+    with open(descriptors_path) as f:
+        eurovoc = json.load(f)
 
-        with open(descriptors_path) as f:
-            eurovoc = json.load(f)
+    if retry_failed:
+        # Load failed IDs and existing output, submit small retry batch
+        with open(retry_failed) as f:
+            failed_ids = [line.strip() for line in f if line.strip()]
+        print(f"Retrying {len(failed_ids)} failed requests...")
+
+        if os.path.exists(output_path):
+            with open(output_path) as f:
+                existing_results = json.load(f)
+        else:
+            existing_results = {}
+
+        requests = []
+        for custom_id in failed_ids:
+            eurovoc_id, lang_code = custom_id.rsplit("__", 1)
+            if eurovoc_id not in eurovoc:
+                continue
+            en_desc = eurovoc[eurovoc_id].get("en")
+            if not en_desc or lang_code not in LANGUAGES:
+                continue
+            requests.append(build_request(custom_id, en_desc, lang_code))
+
+        batch_id = submit_and_poll(client, requests)
+        new_results, still_failed = parse_results(client, batch_id)
+
+        for eid, langs in new_results.items():
+            if eid not in existing_results:
+                existing_results[eid] = {}
+            existing_results[eid].update(langs)
+
+        save_output(existing_results, output_path, still_failed)
+
+    elif batch_id:
+        # Retrieve already-completed batch
+        print(f"Retrieving existing batch: {batch_id}")
+        print("Polling for completion (every 60s)...")
+        while True:
+            batch = client.messages.batches.retrieve(batch_id)
+            counts = batch.request_counts
+            print(
+                f"  {time.strftime('%H:%M:%S')} — "
+                f"processing: {counts.processing}, "
+                f"succeeded: {counts.succeeded}, "
+                f"errored: {counts.errored}"
+            )
+            if batch.processing_status == "ended":
+                break
+            time.sleep(60)
+
+        print("\nBatch finished. Parsing results...")
+        results, failed = parse_results(client, batch_id)
+        save_output(results, output_path, failed)
+
+    else:
+        # Fresh run — load dataset, build all requests, submit
+        used_ids = get_used_label_ids()
 
         requests = []
         skipped = 0
@@ -138,64 +248,15 @@ def main(descriptors_path: str, output_path: str, batch_id: str = None):
             if not en_desc:
                 skipped += 1
                 continue
-            for lang_code, lang_name in LANGUAGES.items():
-                requests.append(
-                    Request(
-                        custom_id=f"{eid}__{lang_code}",
-                        params=MessageCreateParamsNonStreaming(
-                            model=MODEL,
-                            max_tokens=300,
-                            system=SYSTEM_PROMPT,
-                            messages=[
-                                {
-                                    "role": "user",
-                                    "content": build_user_prompt(en_desc, lang_name),
-                                }
-                            ],
-                        ),
-                    )
-                )
+            for lang_code in LANGUAGES:
+                requests.append(build_request(f"{eid}__{lang_code}", en_desc, lang_code))
 
         print(f"Prepared {len(requests)} requests ({skipped} concepts skipped).")
-        print("Submitting batch...")
-        batch = client.messages.batches.create(requests=requests)
-        batch_id = batch.id
-        print(f"Batch submitted. ID: {batch_id}")
+        batch_id = submit_and_poll(client, requests)
 
-        with open("batch_id.txt", "w") as f:
-            f.write(batch_id)
-
-    # Poll until done
-    print("Polling for completion (every 60s)...")
-    while True:
-        batch = client.messages.batches.retrieve(batch_id)
-        counts = batch.request_counts
-        print(
-            f"  {time.strftime('%H:%M:%S')} — "
-            f"processing: {counts.processing}, "
-            f"succeeded: {counts.succeeded}, "
-            f"errored: {counts.errored}"
-        )
-        if batch.processing_status == "ended":
-            break
-        time.sleep(60)
-
-    print("\nBatch finished. Parsing results...")
-    results, failed = parse_results(client, batch_id)
-
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(results, f, ensure_ascii=False, indent=1)
-
-    print(f"\nDone.")
-    print(f"  Concepts saved: {len(results)}")
-    print(f"  Total descriptions: {sum(len(v) for v in results.values())}")
-    print(f"  Failed: {len(failed)}")
-    print(f"  Output: {output_path}")
-
-    if failed:
-        with open("failed_requests.txt", "w") as f:
-            f.write("\n".join(failed))
-        print(f"  Failed IDs written to failed_requests.txt")
+        print("\nBatch finished. Parsing results...")
+        results, failed = parse_results(client, batch_id)
+        save_output(results, output_path, failed)
 
 
 if __name__ == "__main__":
@@ -215,5 +276,10 @@ if __name__ == "__main__":
         default=None,
         help="Existing batch ID to retrieve instead of submitting a new batch.",
     )
+    parser.add_argument(
+        "--retry-failed",
+        default=None,
+        help="Path to failed_requests.txt to retry only failed requests.",
+    )
     args = parser.parse_args()
-    main(args.descriptors, args.output, args.batch_id)
+    main(args.descriptors, args.output, args.batch_id, args.retry_failed)

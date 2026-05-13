@@ -100,7 +100,7 @@ async def generate_description(
     english_descriptor: str,
     lang_code: str,
     language_name: str,
-    retries: int = 3,
+    retries: int = 5,
 ) -> tuple[str, str, str | None]:
     """
     Returns (eurovoc_id, lang_code, description_or_None).
@@ -130,7 +130,7 @@ async def generate_description(
                 print(f"  [WARN] Malformed JSON for {eurovoc_id}/{lang_code}: {raw[:80]}")
                 return eurovoc_id, lang_code, None
         except anthropic.RateLimitError:
-            wait = 2 ** attempt
+            wait = 30 * (attempt + 1)  # 30s, 60s, 90s
             print(f"  [WARN] Rate limit hit for {eurovoc_id}/{lang_code}, waiting {wait}s")
             await asyncio.sleep(wait)
         except Exception as e:

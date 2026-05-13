@@ -2,6 +2,7 @@ import json
 import numpy as np
 import requests
 import random
+import os
 from collections import defaultdict
 from tqdm import tqdm
 from datasets import load_dataset
@@ -11,44 +12,67 @@ from sentence_transformers import SentenceTransformer
 
 MODELS = [
     {
-        'name':       'BAAI/bge-m3',
-        'short':      'bge-m3',
-        'batch_size': 32,
-        'prefix':     None,
-        'kwargs':     {'device': 'cuda'},
+        'name':        'BAAI/bge-m3',
+        'short':       'bge-m3',
+        'batch_size':  32,
+        'prefix':      None,
+        'prompt_name': None,
+        'kwargs':      {'device': 'cuda'},
         'encode_kwargs': {'max_seq_length': 512},
     },
     {
-        'name':       'intfloat/multilingual-e5-small',
-        'short':      'e5-small',
-        'batch_size': 64,
-        'prefix':     'passage: ',   # E5 requires passage prefix for documents
-        'kwargs':     {'device': 'cuda'},
+        'name':        'intfloat/multilingual-e5-small',
+        'short':       'e5-small',
+        'batch_size':  64,
+        'prefix':      'passage: ',   # E5 requires passage prefix for documents
+        'prompt_name': None,
+        'kwargs':      {'device': 'cuda'},
         'encode_kwargs': {},
     },
     {
-        'name':       'sentence-transformers/LaBSE',
-        'short':      'labse',
-        'batch_size': 64,
-        'prefix':     None,
-        'kwargs':     {'device': 'cuda'},
+        'name':        'sentence-transformers/LaBSE',
+        'short':       'labse',
+        'batch_size':  64,
+        'prefix':      None,
+        'prompt_name': None,
+        'kwargs':      {'device': 'cuda'},
         'encode_kwargs': {},
     },
     {
-        'name':       'Alibaba-NLP/gte-multilingual-base',
-        'short':      'gte-multilingual-base',
-        'batch_size': 32,
-        'prefix':     None,
-        'kwargs':     {'device': 'cuda', 'trust_remote_code': True},
+        'name':        'Alibaba-NLP/gte-multilingual-base',
+        'short':       'gte-multilingual-base',
+        'batch_size':  32,
+        'prefix':      None,
+        'prompt_name': None,
+        'kwargs':      {'device': 'cuda', 'trust_remote_code': True},
         'encode_kwargs': {},
     },
-    # OpenAI is handled separately below — set to True to include
+    {
+        # Training documents are passage-side → prompt_name=None (no query prompt)
+        'name':        'Qwen/Qwen3-Embedding-0.6B',
+        'short':       'qwen3-embedding-0.6b',
+        'batch_size':  32,
+        'prefix':      None,
+        'prompt_name': None,          # passage side — no prompt
+        'kwargs':      {'device': 'cuda'},
+        'encode_kwargs': {'max_seq_length': 512},
+    },
+    {
+        # Same asymmetric logic as Qwen3 — documents are passage side
+        'name':        'microsoft/harrier-oss-v1-0.6b',
+        'short':       'harrier-oss-v1-0.6b',
+        'batch_size':  32,
+        'prefix':      None,
+        'prompt_name': None,          # passage side — no prompt
+        'kwargs':      {'device': 'cuda', 'model_kwargs': {'dtype': 'auto'}},
+        'encode_kwargs': {'max_seq_length': 512},
+    },
 ]
 
 INCLUDE_OPENAI = True
 OPENAI_MODEL   = 'text-embedding-3-small'
 OPENAI_SHORT   = 'openai'
-OPENAI_API_KEY = ''   # <-- fill in your key
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
 
 MAX_DOCS_PER_LABEL = 10
 RANDOM_SEED        = 42
@@ -117,7 +141,7 @@ def build_centroids(doc_embeddings_map, n_labels, sampled_indices, embed_dim):
     """
     doc_embeddings_map: dict {doc_idx: embedding vector}
     Returns centroid matrix of shape (n_labels, embed_dim).
-    Labels with no documents get a zero vector.
+    Labels with no training documents get a zero vector.
     """
     centroids = np.zeros((n_labels, embed_dim), dtype=np.float32)
     for label_int in range(n_labels):
@@ -155,6 +179,7 @@ for model_cfg in MODELS:
         show_progress_bar=True,
         batch_size=model_cfg['batch_size'],
         normalize_embeddings=True,
+        prompt_name=model_cfg['prompt_name'],  # None for all models (passage side)
     )
 
     # Map back to doc index
@@ -163,8 +188,8 @@ for model_cfg in MODELS:
         for pos, doc_idx in enumerate(all_needed_doc_indices)
     }
 
-    embed_dim  = embeddings.shape[1]
-    centroids  = build_centroids(doc_embeddings_map, n_labels, sampled_indices, embed_dim)
+    embed_dim = embeddings.shape[1]
+    centroids = build_centroids(doc_embeddings_map, n_labels, sampled_indices, embed_dim)
 
     out_path = f"{OUTPUT_DIR}/centroids_{short}.npy"
     np.save(out_path, centroids)
@@ -175,6 +200,12 @@ for model_cfg in MODELS:
 # ── OpenAI ─────────────────────────────────────────────────────────────────────
 
 if INCLUDE_OPENAI:
+    if not OPENAI_API_KEY:
+        raise ValueError(
+            "OPENAI_API_KEY environment variable is not set. "
+            "Run: export OPENAI_API_KEY='sk-...'"
+        )
+
     import openai
     import time
 
@@ -213,11 +244,11 @@ if INCLUDE_OPENAI:
 # ── Save metadata ──────────────────────────────────────────────────────────────
 
 metadata = {
-    'language':           LANGUAGE,
-    'split':              'train',
-    'max_docs_per_label': MAX_DOCS_PER_LABEL,
-    'random_seed':        RANDOM_SEED,
-    'n_labels':           n_labels,
+    'language':               LANGUAGE,
+    'split':                  'train',
+    'max_docs_per_label':     MAX_DOCS_PER_LABEL,
+    'random_seed':            RANDOM_SEED,
+    'n_labels':               n_labels,
     'n_unique_docs_embedded': len(all_needed_doc_indices),
     'label_coverage': {
         'with_docs':    int(n_covered),

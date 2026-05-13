@@ -12,58 +12,29 @@ from sentence_transformers import SentenceTransformer
 
 MODELS = [
     {
-        'name':        'BAAI/bge-m3',
-        'short':       'bge-m3',
-        'batch_size':  32,
-        'prefix':      None,
-        'prompt_name': None,
-        'kwargs':      {'device': 'cuda'},
-        'encode_kwargs': {'max_seq_length': 512},
-    },
-    {
-        'name':        'intfloat/multilingual-e5-small',
-        'short':       'e5-small',
-        'batch_size':  64,
-        'prefix':      'passage: ',   # E5 requires passage prefix for documents
-        'prompt_name': None,
-        'kwargs':      {'device': 'cuda'},
-        'encode_kwargs': {},
-    },
-    {
-        'name':        'sentence-transformers/LaBSE',
-        'short':       'labse',
-        'batch_size':  64,
-        'prefix':      None,
-        'prompt_name': None,
-        'kwargs':      {'device': 'cuda'},
-        'encode_kwargs': {},
-    },
-    {
         'name':        'Alibaba-NLP/gte-multilingual-base',
         'short':       'gte-multilingual-base',
         'batch_size':  32,
         'prefix':      None,
         'prompt_name': None,
-        'kwargs':      {'device': 'cuda', 'trust_remote_code': True},
+        'kwargs':      {'device': 'cuda', 'trust_remote_code': True, 'model_kwargs': {'torch_dtype': 'float32'}},
         'encode_kwargs': {},
     },
     {
-        # Training documents are passage-side → prompt_name=None (no query prompt)
         'name':        'Qwen/Qwen3-Embedding-0.6B',
         'short':       'qwen3-embedding-0.6b',
         'batch_size':  32,
         'prefix':      None,
-        'prompt_name': None,          # passage side — no prompt
+        'prompt_name': None,
         'kwargs':      {'device': 'cuda'},
         'encode_kwargs': {'max_seq_length': 512},
     },
     {
-        # Same asymmetric logic as Qwen3 — documents are passage side
         'name':        'microsoft/harrier-oss-v1-0.6b',
         'short':       'harrier-oss-v1-0.6b',
         'batch_size':  32,
         'prefix':      None,
-        'prompt_name': None,          # passage side — no prompt
+        'prompt_name': None,
         'kwargs':      {'device': 'cuda', 'model_kwargs': {'dtype': 'auto'}},
         'encode_kwargs': {'max_seq_length': 512},
     },

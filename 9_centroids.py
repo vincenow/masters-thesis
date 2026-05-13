@@ -12,15 +12,6 @@ from sentence_transformers import SentenceTransformer
 
 MODELS = [
     {
-        'name':        'Alibaba-NLP/gte-multilingual-base',
-        'short':       'gte-multilingual-base',
-        'batch_size':  32,
-        'prefix':      None,
-        'prompt_name': None,
-        'kwargs':      {'device': 'cuda', 'trust_remote_code': True, 'model_kwargs': {'torch_dtype': 'float32'}},
-        'encode_kwargs': {},
-    },
-    {
         'name':        'Qwen/Qwen3-Embedding-0.6B',
         'short':       'qwen3-embedding-0.6b',
         'batch_size':  32,

@@ -170,11 +170,17 @@ if INCLUDE_OPENAI:
         all_embeddings = []
         for i in tqdm(range(0, len(texts), batch_size), desc="OpenAI batches"):
             batch = [truncate(t) for t in texts[i:i+batch_size]]
-            response = client.embeddings.create(input=batch, model=model)
-            batch_embeddings = [item.embedding for item in sorted(
-                response.data, key=lambda x: x.index)]
-            all_embeddings.extend(batch_embeddings)
-            time.sleep(0.1)  # rate limit headroom
+            while True:
+                try:
+                    response = client.embeddings.create(input=batch, model=model)
+                    batch_embeddings = [item.embedding for item in sorted(
+                        response.data, key=lambda x: x.index)]
+                    all_embeddings.extend(batch_embeddings)
+                    time.sleep(0.5)  # increased from 0.1
+                    break
+                except openai.RateLimitError:
+                    print("Rate limit hit, waiting 10s...")
+                    time.sleep(10)
         return np.array(all_embeddings, dtype=np.float32)
 
     print(f"Embedding {len(texts_to_embed)} documents via OpenAI API...")

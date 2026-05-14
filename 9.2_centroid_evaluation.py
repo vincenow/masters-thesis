@@ -29,41 +29,23 @@ MODELS = [
         'short':          'e5-small',
         'name':           'intfloat/multilingual-e5-small',
         'batch_size':     32,
-        'prefix':         'query: ',  # E5 uses query prefix for documents at eval time
+        'prefix':         'query: ',
         'prompt_name':    None,
         'kwargs':         {'device': 'cuda'},
         'max_seq_length': None,
-    },
-    {
-        'short':          'labse',
-        'name':           'sentence-transformers/LaBSE',
-        'batch_size':     32,
-        'prefix':         None,
-        'prompt_name':    None,
-        'kwargs':         {'device': 'cuda'},
-        'max_seq_length': None,
-    },
-    {
-        'short':          'qwen3-embedding-0.6b',
-        'name':           'Qwen/Qwen3-Embedding-0.6B',
-        'batch_size':     8,
-        'prefix':         None,
-        'prompt_name':    'query',    # query side at eval time
-        'kwargs':         {'device': 'cuda'},
-        'max_seq_length': 512,
     },
     {
         'short':          'harrier-oss-v1-0.6b',
         'name':           'microsoft/harrier-oss-v1-0.6b',
         'batch_size':     8,
         'prefix':         None,
-        'prompt_name':    'web_search_query',  # query side at eval time
+        'prompt_name':    'web_search_query',
         'kwargs':         {'device': 'cuda', 'model_kwargs': {'dtype': 'auto'}},
         'max_seq_length': 512,
     },
 ]
 
-INCLUDE_OPENAI = True
+INCLUDE_OPENAI = False
 OPENAI_MODEL   = 'text-embedding-3-small'
 OPENAI_SHORT   = 'openai'
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")

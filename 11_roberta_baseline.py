@@ -274,7 +274,7 @@ def main():
             train_ds,
             batch_size=args.batch_size,
             shuffle=True,
-            num_workers=4,
+            num_workers=0,
             pin_memory=True,
         )
 
@@ -319,7 +319,7 @@ def main():
             test_ds,
             batch_size=args.batch_size * 2,
             shuffle=False,
-            num_workers=4,
+            num_workers=0,
             pin_memory=True,
         )
 

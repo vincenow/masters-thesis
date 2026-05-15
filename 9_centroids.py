@@ -10,26 +10,7 @@ from sentence_transformers import SentenceTransformer
 
 # ── Configuration ─────────────────────────────────────────────────────────────
 
-MODELS = [
-    {
-        'name':        'Qwen/Qwen3-Embedding-0.6B',
-        'short':       'qwen3-embedding-0.6b',
-        'batch_size':  32,
-        'prefix':      None,
-        'prompt_name': None,
-        'kwargs':      {'device': 'cuda'},
-        'encode_kwargs': {'max_seq_length': 512},
-    },
-    {
-        'name':        'microsoft/harrier-oss-v1-0.6b',
-        'short':       'harrier-oss-v1-0.6b',
-        'batch_size':  32,
-        'prefix':      None,
-        'prompt_name': None,
-        'kwargs':      {'device': 'cuda', 'model_kwargs': {'dtype': 'auto'}},
-        'encode_kwargs': {'max_seq_length': 512},
-    },
-]
+MODELS = []
 
 INCLUDE_OPENAI = True
 OPENAI_MODEL   = 'text-embedding-3-small'
@@ -177,7 +158,7 @@ if INCLUDE_OPENAI:
 
     client = openai.OpenAI(api_key=OPENAI_API_KEY)
 
-    def embed_openai_batch(texts, model=OPENAI_MODEL, batch_size=512):
+    def embed_openai_batch(texts, model=OPENAI_MODEL, batch_size=50):
         all_embeddings = []
         for i in tqdm(range(0, len(texts), batch_size), desc="OpenAI batches"):
             batch = texts[i:i+batch_size]

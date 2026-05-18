@@ -15,7 +15,7 @@ with open(GENERATED_DESCRIPTORS_PATH) as f:
     generated_descriptors = json.load(f)
 
 print("Loading embedding model...")
-embedding_model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
+embedding_model = SentenceTransformer(MODEL_NAME, trust_remote_code=True, device='cpu')
 embedding_model.max_seq_length = 512
 embedding_model.tokenizer.model_max_length = 512
 tokenizer = embedding_model.tokenizer

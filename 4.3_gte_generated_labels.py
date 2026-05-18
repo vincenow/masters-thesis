@@ -4,6 +4,7 @@ from tqdm import tqdm
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from transformers import AutoTokenizer
 
 TEST_MODE = False
 
@@ -17,7 +18,7 @@ with open(GENERATED_DESCRIPTORS_PATH) as f:
 print("Loading embedding model...")
 embedding_model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
 embedding_model.max_seq_length = 512
-
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
 def precision_at_k(y_true, y_pred, k):
     top_k = y_pred[:k]
@@ -57,12 +58,20 @@ def run_condition(language, language_name, label_lang, label_condition):
     classlabel = dataset.features["labels"].feature
     label_ids = classlabel.names
 
+    label_descriptors_raw = [
+        generated_descriptors.get(label_id, {}).get(label_lang) or
+        generated_descriptors.get(label_id, {}).get("en") or
+        label_id
+        for label_id in label_ids
+    ]
     label_descriptors = [
-    generated_descriptors.get(label_id, {}).get(label_lang) or
-    generated_descriptors.get(label_id, {}).get("en") or
-    label_id
-    for label_id in label_ids
-]
+        tokenizer.decode(
+            tokenizer.encode(desc, max_length=512, truncation=True),
+            skip_special_tokens=True
+        )
+        for desc in label_descriptors_raw
+    ]
+
     print("Encoding labels...")
     label_embeddings = embedding_model.encode(
         label_descriptors,
@@ -71,7 +80,13 @@ def run_condition(language, language_name, label_lang, label_condition):
     )
 
     print("Encoding documents...")
-    texts = [doc['text'] for doc in dataset]
+    texts = [
+        tokenizer.decode(
+            tokenizer.encode(doc['text'], max_length=512, truncation=True),
+            skip_special_tokens=True
+        )
+        for doc in dataset
+    ]
     doc_embeddings = embedding_model.encode(
         texts,
         show_progress_bar=True,

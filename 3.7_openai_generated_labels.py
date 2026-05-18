@@ -89,9 +89,11 @@ def run_condition(language, language_name, label_lang, label_condition):
 
     # Load generated descriptors for the target language
     label_descriptors_raw = [
-        generated_descriptors.get(label_id, {}).get(label_lang, "")
-        for label_id in label_ids
-    ]
+    generated_descriptors.get(label_id, {}).get(label_lang) or
+    generated_descriptors.get(label_id, {}).get("en") or
+    label_id  # last resort: use the EuroVoc ID itself
+    for label_id in label_ids
+]
 
     # ── Label embeddings (cached per language condition) ──────────────────────
     label_cache = f'openai_label_embeddings_generated_{label_lang}.npy'

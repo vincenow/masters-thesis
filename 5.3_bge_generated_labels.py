@@ -57,9 +57,11 @@ def run_condition(language, language_name, label_lang, label_condition):
     classlabel = dataset.features["labels"].feature
     label_ids = classlabel.names
     label_descriptors = [
-        generated_descriptors.get(label_id, {}).get(label_lang, "")
-        for label_id in label_ids
-    ]
+    generated_descriptors.get(label_id, {}).get(label_lang) or
+    generated_descriptors.get(label_id, {}).get("en") or
+    label_id
+    for label_id in label_ids
+]
 
     print("Encoding labels...")
     label_embeddings = embedding_model.encode(

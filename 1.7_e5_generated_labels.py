@@ -45,8 +45,7 @@ def run_condition(language, language_name, label_lang, label_condition):
     print(f"{'='*60}")
 
     dataset = load_dataset('coastalcph/multi_eurlex', language, split='test',
-                           label_level='all_levels')
-
+                       label_level='all_levels', trust_remote_code=True)
     if TEST_MODE:
         dataset = dataset.select(range(50))
         print(f"TEST MODE: using 50 documents only")

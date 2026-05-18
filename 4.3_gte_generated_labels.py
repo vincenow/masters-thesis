@@ -18,7 +18,7 @@ with open(GENERATED_DESCRIPTORS_PATH) as f:
 print("Loading embedding model...")
 embedding_model = SentenceTransformer(MODEL_NAME, trust_remote_code=True)
 embedding_model.max_seq_length = 512
-tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME, trust_remote_code=True)
 
 def precision_at_k(y_true, y_pred, k):
     top_k = y_pred[:k]

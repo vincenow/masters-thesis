@@ -1,6 +1,5 @@
 import json
 import numpy as np
-import requests
 from tqdm import tqdm
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
@@ -15,8 +14,8 @@ CANDIDATE_K = 100
 MODEL_NAME = 'Qwen/Qwen3-Embedding-0.6B'
 MODEL_SHORT = 'qwen3-embedding-0.6b'
 
-url = "https://raw.githubusercontent.com/nlpaueb/multi-eurlex/master/data/eurovoc_descriptors.json"
-eurovoc_concepts = requests.get(url).json()
+with open("eurovoc_descriptors.json") as f:
+    eurovoc_concepts = json.load(f)
 
 print("Loading embedding model...")
 embedding_model = SentenceTransformer(MODEL_NAME, device='cuda')

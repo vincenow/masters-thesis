@@ -135,13 +135,9 @@ if TEST_MODE:
     conditions = [('en', 'English', 'en', 'generated_labels')]
 else:
     conditions = [
-        ('en', 'English', 'en', 'generated_labels'),
-        ('fr', 'French',  'en', 'generated_labels'),
-        ('nl', 'Dutch',   'en', 'generated_labels'),
-        ('de', 'German',  'en', 'generated_labels'),
-        ('fr', 'French',  'fr', 'generated_native_labels'),
-        ('nl', 'Dutch',   'nl', 'generated_native_labels'),
-        ('de', 'German',  'de', 'generated_native_labels'),
+    ('fr', 'French',  'fr', 'generated_native_labels'),
+    ('nl', 'Dutch',   'nl', 'generated_native_labels'),
+    ('de', 'German',  'de', 'generated_native_labels'),
     ]
 
 for language, language_name, label_lang, label_condition in conditions:

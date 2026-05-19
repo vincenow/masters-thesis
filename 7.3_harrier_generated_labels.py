@@ -15,7 +15,7 @@ with open(GENERATED_DESCRIPTORS_PATH) as f:
     generated_descriptors = json.load(f)
 
 print("Loading embedding model...")
-embedding_model = SentenceTransformer(MODEL_NAME, model_kwargs={"dtype": "auto"}, device='cuda')
+embedding_model = SentenceTransformer(MODEL_NAME, model_kwargs={"dtype": "auto"}, device='cpu')
 embedding_model.max_seq_length = 512
 
 

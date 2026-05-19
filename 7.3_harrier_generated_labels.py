@@ -9,7 +9,7 @@ TEST_MODE = False
 
 MODEL_NAME = 'microsoft/harrier-oss-v1-0.6b'
 MODEL_SHORT = 'harrier-oss-v1-0.6b'
-GENERATED_DESCRIPTORS_PATH = "/home/ubuntu/masters-thesis/generated_descriptors.json"
+GENERATED_DESCRIPTORS_PATH = "generated_descriptors.json"
 
 with open(GENERATED_DESCRIPTORS_PATH) as f:
     generated_descriptors = json.load(f)

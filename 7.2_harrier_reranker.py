@@ -1,6 +1,5 @@
 import json
 import numpy as np
-import requests
 from tqdm import tqdm
 from datasets import load_dataset
 from sentence_transformers import SentenceTransformer
@@ -13,8 +12,8 @@ CANDIDATE_K = 100
 MODEL_NAME = 'microsoft/harrier-oss-v1-0.6b'
 MODEL_SHORT = 'harrier-oss-v1-0.6b'
 
-url = "https://raw.githubusercontent.com/nlpaueb/multi-eurlex/master/data/eurovoc_descriptors.json"
-eurovoc_concepts = requests.get(url).json()
+with open("eurovoc_descriptors.json") as f:
+    eurovoc_concepts = json.load(f)
 
 print("Loading embedding model...")
 embedding_model = SentenceTransformer(MODEL_NAME, model_kwargs={"dtype": "auto"}, device='cuda')
@@ -63,8 +62,6 @@ def run_condition(language, language_name, label_lang, label_condition):
     label_ids = classlabel.names
     label_descriptors_raw = [eurovoc_concepts[label_id][label_lang] for label_id in label_ids]
 
-    # harrier is asymmetric: documents use a task instruction prompt;
-    # label descriptors are encoded as passages (no prompt).
     print("Encoding labels...")
     label_embeddings = embedding_model.encode(
         label_descriptors_raw,
@@ -79,7 +76,7 @@ def run_condition(language, language_name, label_lang, label_condition):
         texts,
         show_progress_bar=True,
         batch_size=8,
-        prompt_name="web_search_query",  # query side — task instruction prefix
+        prompt_name=None,  # TODO: verify correct prompt via print(embedding_model.prompts)
     )
 
     k_values = [5, 10, 20, 50, 100]
@@ -94,11 +91,9 @@ def run_condition(language, language_name, label_lang, label_condition):
         if len(true_labels) == 0:
             continue
 
-        # Stage 1: retrieve top CANDIDATE_K by cosine similarity
         similarities = cosine_similarity([doc_embeddings[idx]], label_embeddings)[0]
         top_candidate_indices = np.argsort(similarities)[::-1][:CANDIDATE_K]
 
-        # Stage 2: rerank with cross-encoder (raw text, no prompt)
         doc_text = doc['text']
         pairs = [[doc_text, label_descriptors_raw[i]] for i in top_candidate_indices]
         rerank_scores = np.array(reranker.compute_score(pairs, batch_size=32))

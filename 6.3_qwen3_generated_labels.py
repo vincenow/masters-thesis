@@ -9,13 +9,13 @@ TEST_MODE = False
 
 MODEL_NAME = 'Qwen/Qwen3-Embedding-0.6B'
 MODEL_SHORT = 'qwen3-embedding-0.6b'
-GENERATED_DESCRIPTORS_PATH = "/home/ubuntu/masters-thesis/generated_descriptors.json"
+GENERATED_DESCRIPTORS_PATH = "generated_descriptors.json"
 
 with open(GENERATED_DESCRIPTORS_PATH) as f:
     generated_descriptors = json.load(f)
 
 print("Loading embedding model...")
-embedding_model = SentenceTransformer(MODEL_NAME, model_kwargs={"dtype": "auto"}, device='cpu')
+embedding_model = SentenceTransformer(MODEL_NAME, model_kwargs={"dtype": "auto"}, device='cuda')
 embedding_model.max_seq_length = 512
 
 

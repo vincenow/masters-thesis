@@ -102,7 +102,7 @@ def run_condition(language, language_name, label_lang, label_condition):
         # Stage 2: rerank with cross-encoder
         doc_text = doc['text']
         pairs = [[doc_text, label_descriptors_raw[i]] for i in top_candidate_indices]
-        rerank_scores = np.array(reranker.compute_score(pairs, batch_size=4))
+        rerank_scores = np.array(reranker.compute_score(pairs, batch_size=32))
         reranked_order = np.argsort(rerank_scores)[::-1]
         reranked_predictions = top_candidate_indices[reranked_order]
 

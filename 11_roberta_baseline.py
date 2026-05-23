@@ -5,8 +5,9 @@ evaluated on EN, FR, NL, DE test sets (zero-shot cross-lingual transfer).
 Output: results_xlmr_{language}_supervised.json — same format as retrieval results.
 
 Usage:
-    python 11_roberta_baseline.py --output_dir ./results
+    python 11_roberta_baseline.py --output_dir ./results --epochs 3
     python 11_roberta_baseline.py --output_dir ./results --skip_training --model_path ./xlmr_checkpoint
+    python 11_roberta_baseline.py --output_dir ./results --resume_from_epoch 2 --epochs 3
 
 Requirements:
     pip install transformers datasets scikit-learn torch accelerate
@@ -27,19 +28,17 @@ from sklearn.preprocessing import MultiLabelBinarizer
 
 # ── Config ────────────────────────────────────────────────────────────────────
 
-MODEL_NAME = "xlm-roberta-large"
-LANGUAGES  = ["en", "fr", "nl", "de"]
-TRAIN_LANG = "en"
-
+MODEL_NAME   = "xlm-roberta-large"
+LANGUAGES    = ["en", "fr", "nl", "de"]
+TRAIN_LANG   = "en"
 MAX_LENGTH   = 512
-BATCH_SIZE   = 8          # per GPU; reduce to 4 if OOM
-GRAD_ACCUM   = 4          # effective batch = 32
-EPOCHS       = 5
+BATCH_SIZE   = 8
+GRAD_ACCUM   = 4
+EPOCHS       = 3
 LR           = 2e-5
 WARMUP_RATIO = 0.1
 K_VALUES     = [5, 10, 20, 50, 100]
-
-LABEL_LEVEL  = "all_levels"   # 7390 labels
+LABEL_LEVEL  = "all_levels"
 
 
 # ── Dataset ───────────────────────────────────────────────────────────────────
@@ -48,7 +47,7 @@ class MultiEURLEXDataset(Dataset):
     def __init__(self, hf_split, language, tokenizer, mlb, max_length=512):
         texts = [ex["text"][language] for ex in hf_split]
         self.labels = mlb.transform([ex["labels"] for ex in hf_split])
-        print(f"  Tokenizing {len(texts)} documents …")
+        print(f"  Tokenizing {len(texts)} documents …", flush=True)
         enc = tokenizer(
             texts,
             max_length=max_length,
@@ -80,13 +79,11 @@ class XLMRClassifier(nn.Module):
         self.classifier = nn.Linear(hidden_size, num_labels)
 
     def forward(self, input_ids, attention_mask):
-        outputs = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
-        # Mean pooling over non-padding tokens
+        outputs          = self.encoder(input_ids=input_ids, attention_mask=attention_mask)
         token_embeddings = outputs.last_hidden_state
         mask_expanded    = attention_mask.unsqueeze(-1).float()
         pooled           = (token_embeddings * mask_expanded).sum(1) / mask_expanded.sum(1).clamp(min=1e-9)
-        logits           = self.classifier(pooled)
-        return logits
+        return self.classifier(pooled)
 
 
 # ── Metrics ───────────────────────────────────────────────────────────────────
@@ -141,7 +138,18 @@ def compute_metrics(scores, true_labels, k_values):
 
 # ── Training ──────────────────────────────────────────────────────────────────
 
-def train(model, train_loader, device, epochs, lr, warmup_ratio, grad_accum):
+def save_checkpoint(model, tokenizer, unique_labels, model_path, epoch):
+    ckpt_dir = os.path.join(model_path, f"epoch_{epoch}")
+    os.makedirs(ckpt_dir, exist_ok=True)
+    core = model.module if hasattr(model, "module") else model
+    torch.save(core.state_dict(), os.path.join(ckpt_dir, "model.pt"))
+    tokenizer.save_pretrained(ckpt_dir)
+    with open(os.path.join(ckpt_dir, "mlb_classes.json"), "w") as f:
+        json.dump(unique_labels, f)
+    print(f"  Checkpoint saved → {ckpt_dir}", flush=True)
+
+def train(model, train_loader, device, epochs, lr, warmup_ratio, grad_accum,
+          tokenizer, unique_labels, model_path, start_epoch=0):
     optimizer    = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     total_steps  = len(train_loader) * epochs // grad_accum
     warmup_steps = int(total_steps * warmup_ratio)
@@ -149,7 +157,7 @@ def train(model, train_loader, device, epochs, lr, warmup_ratio, grad_accum):
     loss_fn      = nn.BCEWithLogitsLoss()
 
     model.train()
-    for epoch in range(epochs):
+    for epoch in range(start_epoch, epochs):
         total_loss = 0.0
         optimizer.zero_grad()
         for step, batch in enumerate(train_loader):
@@ -174,6 +182,9 @@ def train(model, train_loader, device, epochs, lr, warmup_ratio, grad_accum):
         avg_loss = total_loss / len(train_loader)
         print(f"Epoch {epoch+1}/{epochs} complete — avg loss: {avg_loss:.4f}", flush=True)
 
+        # Save checkpoint after every epoch
+        save_checkpoint(model, tokenizer, unique_labels, model_path, epoch + 1)
+
     return model
 
 
@@ -182,14 +193,12 @@ def train(model, train_loader, device, epochs, lr, warmup_ratio, grad_accum):
 @torch.no_grad()
 def evaluate(model, eval_loader, device):
     model.eval()
-    all_scores = []
-    all_labels = []
+    all_scores, all_labels = [], []
     for batch in eval_loader:
         input_ids      = batch["input_ids"].to(device)
         attention_mask = batch["attention_mask"].to(device)
         logits         = model(input_ids, attention_mask)
-        scores         = torch.sigmoid(logits).cpu().numpy()
-        all_scores.append(scores)
+        all_scores.append(torch.sigmoid(logits).cpu().numpy())
         all_labels.append(batch["labels"].numpy())
     return np.vstack(all_scores), np.vstack(all_labels)
 
@@ -221,21 +230,22 @@ def build_output(language, metrics_by_k, n_docs):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--output_dir",    type=str, default="./results")
-    parser.add_argument("--skip_training", action="store_true")
-    parser.add_argument("--model_path",    type=str, default="./xlmr_checkpoint")
-    parser.add_argument("--batch_size",    type=int, default=BATCH_SIZE)
-    parser.add_argument("--epochs",        type=int, default=EPOCHS)
+    parser.add_argument("--output_dir",        type=str, default="./results")
+    parser.add_argument("--skip_training",     action="store_true")
+    parser.add_argument("--model_path",        type=str, default="./xlmr_checkpoint")
+    parser.add_argument("--batch_size",        type=int, default=BATCH_SIZE)
+    parser.add_argument("--epochs",            type=int, default=EPOCHS)
+    parser.add_argument("--resume_from_epoch", type=int, default=0,
+                        help="Resume training from this epoch (loads checkpoint from model_path/epoch_N)")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(args.model_path, exist_ok=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Device: {device}")
+    print(f"Device: {device}", flush=True)
 
-    # ── Load dataset ──────────────────────────────────────────────────────────
-    print("Loading MultiEURLEX …")
+    print("Loading MultiEURLEX …", flush=True)
     dataset = load_dataset(
         "coastalcph/multi_eurlex",
         "all_languages",
@@ -248,48 +258,62 @@ def main():
     mlb = MultiLabelBinarizer(classes=unique_labels)
     mlb.fit([[l] for l in unique_labels])
     num_labels = len(unique_labels)
-    print(f"Number of labels: {num_labels}")
+    print(f"Number of labels: {num_labels}", flush=True)
 
     tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
 
     # ── Train ─────────────────────────────────────────────────────────────────
     if not args.skip_training:
-        print(f"Building training set ({TRAIN_LANG}) …")
+        # Load from checkpoint if resuming
+        if args.resume_from_epoch > 0:
+            ckpt_dir = os.path.join(args.model_path, f"epoch_{args.resume_from_epoch}")
+            print(f"Resuming from checkpoint: {ckpt_dir}", flush=True)
+            with open(os.path.join(ckpt_dir, "mlb_classes.json")) as f:
+                unique_labels = json.load(f)
+            mlb = MultiLabelBinarizer(classes=unique_labels)
+            mlb.fit([[l] for l in unique_labels])
+            num_labels = len(unique_labels)
+            model = XLMRClassifier(MODEL_NAME, num_labels)
+            model.load_state_dict(torch.load(os.path.join(ckpt_dir, "model.pt"), map_location=device))
+            model = model.to(device)
+        else:
+            model = XLMRClassifier(MODEL_NAME, num_labels).to(device)
+
+        if torch.cuda.device_count() > 1:
+            print(f"Using {torch.cuda.device_count()} GPUs", flush=True)
+            model = nn.DataParallel(model)
+
+        print(f"Building training set ({TRAIN_LANG}) …", flush=True)
         train_ds = MultiEURLEXDataset(
             dataset["train"], TRAIN_LANG, tokenizer, mlb, MAX_LENGTH
         )
         train_loader = DataLoader(
-            train_ds,
-            batch_size=args.batch_size,
-            shuffle=True,
-            num_workers=0,
-            pin_memory=True,
+            train_ds, batch_size=args.batch_size, shuffle=True,
+            num_workers=0, pin_memory=True,
         )
 
-        print(f"Fine-tuning {MODEL_NAME} …")
-        model = XLMRClassifier(MODEL_NAME, num_labels).to(device)
+        print(f"Fine-tuning {MODEL_NAME} …", flush=True)
+        model = train(
+            model, train_loader, device, args.epochs, LR, WARMUP_RATIO, GRAD_ACCUM,
+            tokenizer, unique_labels, args.model_path,
+            start_epoch=args.resume_from_epoch,
+        )
 
-        if torch.cuda.device_count() > 1:
-            print(f"Using {torch.cuda.device_count()} GPUs")
-            model = nn.DataParallel(model)
-
-        model = train(model, train_loader, device, args.epochs, LR, WARMUP_RATIO, GRAD_ACCUM)
-
+        # Also save final model at top level for convenience
         core = model.module if hasattr(model, "module") else model
         torch.save(core.state_dict(), os.path.join(args.model_path, "model.pt"))
         tokenizer.save_pretrained(args.model_path)
         with open(os.path.join(args.model_path, "mlb_classes.json"), "w") as f:
             json.dump(unique_labels, f)
-        print(f"Model saved to {args.model_path}")
+        print(f"Final model saved to {args.model_path}", flush=True)
 
     else:
-        print(f"Loading model from {args.model_path} …")
+        print(f"Loading model from {args.model_path} …", flush=True)
         with open(os.path.join(args.model_path, "mlb_classes.json")) as f:
             unique_labels = json.load(f)
         mlb = MultiLabelBinarizer(classes=unique_labels)
         mlb.fit([[l] for l in unique_labels])
         num_labels = len(unique_labels)
-
         model = XLMRClassifier(MODEL_NAME, num_labels)
         model.load_state_dict(
             torch.load(os.path.join(args.model_path, "model.pt"), map_location=device)
@@ -298,16 +322,13 @@ def main():
 
     # ── Evaluate per language ─────────────────────────────────────────────────
     for lang in LANGUAGES:
-        print(f"\nEvaluating on {lang} test set …")
+        print(f"\nEvaluating on {lang} test set …", flush=True)
         test_ds = MultiEURLEXDataset(
             dataset["test"], lang, tokenizer, mlb, MAX_LENGTH
         )
         test_loader = DataLoader(
-            test_ds,
-            batch_size=args.batch_size * 2,
-            shuffle=False,
-            num_workers=0,
-            pin_memory=True,
+            test_ds, batch_size=args.batch_size * 2, shuffle=False,
+            num_workers=0, pin_memory=True,
         )
 
         scores, true_labels = evaluate(model, test_loader, device)
@@ -317,13 +338,13 @@ def main():
         out_path = os.path.join(args.output_dir, f"results_xlmr_{lang}_supervised.json")
         with open(out_path, "w") as f:
             json.dump(output, f, indent=2)
-        print(f"  Saved → {out_path}")
+        print(f"  Saved → {out_path}", flush=True)
 
         for k in K_VALUES:
             m = metrics[k]
-            print(f"  k={k:3d}  P@k={m['P@k']:.4f}  R@k={m['R@k']:.4f}  NDCG@k={m['NDCG@k']:.4f}")
+            print(f"  k={k:3d}  P@k={m['P@k']:.4f}  R@k={m['R@k']:.4f}  NDCG@k={m['NDCG@k']:.4f}", flush=True)
 
-    print("\nDone.")
+    print("\nDone.", flush=True)
 
 
 if __name__ == "__main__":

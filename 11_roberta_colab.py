@@ -263,6 +263,8 @@ def build_output(language, metrics_by_k, n_docs):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 
+import random
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output_dir",    type=str, default="./results")
@@ -271,6 +273,13 @@ def main():
     parser.add_argument("--batch_size",    type=int, default=BATCH_SIZE)
     parser.add_argument("--max_epochs",    type=int, default=MAX_EPOCHS)
     args = parser.parse_args()
+
+    # Reproducibility
+    random.seed(42)
+    np.random.seed(42)
+    torch.manual_seed(42)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
 
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(args.model_path, exist_ok=True)
